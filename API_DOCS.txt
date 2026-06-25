@@ -1,0 +1,146 @@
+# API DOCUMENTATION
+# Hệ thống Quản lý Đề thi và Đánh giá Tự động THPT
+# Nguyễn Đình Như Khôi — ĐHKG 2026
+#
+# Base URL: http://localhost:3000/api
+# Auth: Bearer <access_token> trong header Authorization
+# ================================================================
+
+
+## XÁC THỰC (Authentication)
+POST   /auth/login          Đăng nhập → nhận access token + refresh token cookie
+POST   /auth/refresh        Làm mới access token bằng refresh token cookie
+POST   /auth/logout         Đăng xuất, xóa cookie
+GET    /auth/me             Xem thông tin tài khoản đang đăng nhập
+
+
+## NGƯỜI DÙNG (Users)        [Quyền: admin]
+GET    /users               Danh sách tất cả người dùng  ?role=&page=&limit=
+GET    /users/:id           Chi tiết 1 người dùng
+POST   /users               Tạo tài khoản mới
+PATCH  /users/:id/deactivate  Vô hiệu hóa tài khoản
+
+
+## LỚP HỌC (Classes)
+GET    /classes             Danh sách lớp  ?grade=&school_year=  [teacher+]
+GET    /classes/:id         Chi tiết 1 lớp                       [teacher+]
+POST   /classes             Tạo lớp mới                          [admin]
+PUT    /classes/:id         Cập nhật lớp                         [admin]
+DELETE /classes/:id         Xóa lớp (nếu không còn học sinh)     [admin]
+
+
+## MÔN HỌC (Subjects)
+GET    /subjects            Danh sách môn học  ?grade=            [đã đăng nhập]
+GET    /subjects/:id        Chi tiết 1 môn học                    [đã đăng nhập]
+POST   /subjects            Tạo môn học                           [admin]
+PUT    /subjects/:id        Cập nhật môn học                      [admin]
+DELETE /subjects/:id        Xóa môn học (nếu không có câu hỏi)   [admin]
+
+
+## NGÂN HÀNG CÂU HỎI (Questions)
+GET    /questions           Danh sách câu hỏi                     [teacher+]
+                            ?subject_id=&type=&difficulty=&is_approved=&page=&limit=
+GET    /questions/:id       Chi tiết 1 câu hỏi                    [teacher+]
+POST   /questions           Tạo câu hỏi mới                       [teacher, dept_head]
+PUT    /questions/:id       Sửa câu hỏi (chỉ khi chưa duyệt)      [teacher, dept_head]
+PATCH  /questions/:id/approve  Phê duyệt câu hỏi                  [dept_head]
+PATCH  /questions/:id/reject   Từ chối / thu hồi phê duyệt        [dept_head, admin]
+DELETE /questions/:id       Xóa câu hỏi (chưa duyệt, chưa vào đề)[teacher+]
+
+# Body tạo câu hỏi trắc nghiệm:
+# { subject_id, type:"multiple_choice", content, difficulty,
+#   options:[{id:"A",text:"..."},...], correct_answer:{selected:["A"]} }
+
+# Body tạo câu đúng/sai:
+# { subject_id, type:"true_false", content, difficulty,
+#   options:[{id:"1",statement:"..."},...],
+#   correct_answer:{answers:{"1":true,"2":false,...}} }
+
+# Body tạo câu tự luận:
+# { subject_id, type:"essay", content, difficulty, options:null,
+#   correct_answer:{sample:"Đáp án mẫu...", keywords:["từ khóa",...]} }
+
+
+## ĐỀ THI (Exams)
+GET    /exams               Danh sách đề thi                      [teacher+]
+                            ?subject_id=&status=&page=&limit=
+GET    /exams/:id           Chi tiết đề + danh sách câu hỏi       [teacher+]
+POST   /exams               Tạo đề thi mới (bản nháp)             [teacher, dept_head]
+PUT    /exams/:id/questions Chọn câu hỏi thủ công                 [teacher, dept_head]
+                            Body: { questions:[{question_id, score},...] }
+POST   /exams/:id/auto-generate  Tạo đề tự động theo cấu trúc    [teacher, dept_head]
+                            Body: { structure:[{type, difficulty, count, score},...] }
+PATCH  /exams/:id/submit    Gửi đề lên tổ trưởng duyệt            [teacher, dept_head]
+PATCH  /exams/:id/approve   Phê duyệt đề                          [dept_head]
+PATCH  /exams/:id/reject    Từ chối đề, trả về draft              [dept_head, admin]
+
+# Trạng thái đề: draft → pending_approval → approved → archived
+
+
+## LỊCH THI (Exam Schedules)
+GET    /exams/schedules     Xem lịch thi                           [tất cả]
+                            ?exam_id=&class_id=&is_active=
+POST   /exams/schedules     Lên lịch thi cho lớp                  [admin, dept_head]
+                            Body: { exam_id, class_id, start_time, end_time }
+PATCH  /exams/schedules/:id/cancel  Hủy lịch thi                  [admin, dept_head]
+
+
+## PHÒNG THI (Submissions)
+POST   /submissions/enter            Vào phòng thi, nhận đề xáo trộn  [student]
+                                     Body: { schedule_id }
+POST   /submissions/:id/answer       Auto-save câu trả lời             [student]
+                                     Body: { question_id, student_answer }
+POST   /submissions/:id/submit       Nộp bài                           [student]
+GET    /submissions/:id/result       Xem kết quả + đáp án đúng         [student, teacher+]
+PATCH  /submissions/:id/grade        Giáo viên chỉnh điểm tự luận      [teacher+]
+                                     Body: { question_id, final_score }
+GET    /submissions/my-results       Lịch sử điểm bản thân             [student]
+GET    /submissions/schedule/:id/results  Kết quả toàn lớp            [teacher+]
+
+
+## THỐNG KÊ & BÁO CÁO (Statistics)
+
+# Học sinh
+GET    /statistics/my-progress       Biểu đồ tiến độ theo từng môn    [student]
+GET    /statistics/my-summary        Điểm TB từng môn, số bài đã thi  [student]
+
+# Giáo viên — phân tích kỳ thi
+GET    /statistics/schedule/:id              Tổng quan kỳ thi          [teacher+]
+GET    /statistics/schedule/:id/distribution Phân bổ điểm theo loại   [teacher+]
+GET    /statistics/schedule/:id/questions    Phân tích từng câu hỏi   [teacher+]
+GET    /statistics/schedule/:id/full         Tất cả trong 1 request   [teacher+]
+
+# Giáo viên — xem lớp / học sinh
+GET    /statistics/class/:classId             Lịch sử kỳ thi của lớp  [teacher+]
+GET    /statistics/student/:studentId/progress Tiến độ 1 học sinh     [teacher+]
+
+# Admin / tổ trưởng — toàn trường
+GET    /statistics/overview          Dashboard: số liệu tổng trường    [admin, dept_head]
+GET    /statistics/question-bank     Phân bổ ngân hàng câu hỏi        [admin, dept_head]
+
+
+## NLP SERVICE (Python Flask — port 5001)
+POST   /grade-essay          Chấm 1 câu tự luận
+                             Body: { student_text, sample_text, keywords, max_score }
+POST   /grade-batch          Chấm nhiều câu cùng lúc
+                             Body: { essays:[{question_id, student_text, sample_text, keywords, max_score}] }
+POST   /preprocess           Debug: xem kết quả tiền xử lý underthesea
+GET    /health               Kiểm tra service còn sống
+
+
+## HTTP STATUS CODES
+200  OK               Thành công (GET, PATCH, PUT)
+201  Created          Tạo mới thành công (POST)
+400  Bad Request      Dữ liệu đầu vào không hợp lệ
+401  Unauthorized     Chưa đăng nhập hoặc token hết hạn
+403  Forbidden        Không đủ quyền
+404  Not Found        Không tìm thấy tài nguyên
+409  Conflict         Vi phạm ràng buộc nghiệp vụ (trùng lịch, đã duyệt...)
+500  Server Error     Lỗi server nội bộ
+
+
+## PHÂN QUYỀN (Roles)
+student         Học sinh: làm bài, xem điểm bản thân
+teacher         Giáo viên: soạn câu hỏi, tạo đề, xem kết quả lớp
+department_head Tổ trưởng: duyệt câu hỏi/đề thi, lên lịch thi
+admin           Quản trị: quản lý tài khoản, toàn quyền hệ thống
