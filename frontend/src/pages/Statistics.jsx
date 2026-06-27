@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { statisticsService, examService } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { Link } from 'react-router-dom';
 
 // ── Mini bar chart thuần CSS ──────────────────────────────────────
 const BarChart = ({ data, maxValue }) => {
@@ -235,6 +236,7 @@ const AdminStatistics = () => {
                         <th className="px-4 py-2 text-right">Điểm</th>
                         <th className="px-4 py-2 text-right">%</th>
                         <th className="px-4 py-2 text-right">Xếp loại</th>
+                        <th className="px-4 py-2 text-center">Hành động</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -250,6 +252,13 @@ const AdminStatistics = () => {
                             <td className="px-4 py-3 text-right font-semibold">{r.total_score}/{r.max_score}</td>
                             <td className={`px-4 py-3 text-right font-bold ${gc}`}>{p}%</td>
                             <td className={`px-4 py-3 text-right text-xs font-semibold ${gc}`}>{grade}</td>
+                            <td className="px-4 py-3 text-center">
+                              {r.submission_id && (
+                                <Link to={`/submissions/${r.submission_id}/view`} className="inline-flex items-center gap-1 rounded-md bg-brand-50 px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-100">
+                                  👁 Xem bài
+                                </Link>
+                              )}
+                            </td>
                           </tr>
                         );
                       })}
@@ -343,13 +352,76 @@ const StudentStatistics = () => {
   );
 };
 
+const QuestionAnalysisTable = ({ questions }) => {
+  if (!questions?.length) return null;
+
+  const getDifficultyLabel = (d) => ({
+    nhan_biet: 'Nhận biết', thong_hieu: 'Thông hiểu', van_dung: 'Vận dụng', van_dung_cao: 'Vận dụng cao'
+  }[d] || d);
+
+  const getCorrectRateColor = (rate) =>
+    rate >= 70 ? 'text-green-600' : rate >= 40 ? 'text-amber-600' : 'text-red-600';
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm">
+      <div className="border-b border-slate-100 px-4 py-3">
+        <h4 className="text-sm font-semibold text-slate-700">Phân tích từng câu hỏi</h4>
+        <p className="text-xs text-slate-400">Câu đỏ = quá khó ({"<"}40% đúng), câu xanh = quá dễ ({">"}90% đúng)</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <th className="px-4 py-2 text-left">#</th>
+              <th className="px-4 py-2 text-left">Loại</th>
+              <th className="px-4 py-2 text-left">Mức độ</th>
+              <th className="px-4 py-2 text-right">Điểm TB</th>
+              <th className="px-4 py-2 text-right">Tỉ lệ đúng</th>
+              <th className="px-4 py-2 text-right">Số HS trả lời</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {questions.map((q, i) => {
+              const rate = parseFloat(q.correct_rate_pct || 0);
+              return (
+                <tr key={q.question_id}
+                  className={`hover:bg-slate-50 transition
+                    ${rate < 40 ? 'bg-red-50/50' : rate > 90 ? 'bg-green-50/50' : ''}`}>
+                  <td className="px-4 py-2.5 text-slate-500">{i + 1}</td>
+                  <td className="px-4 py-2.5">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs">
+                      {q.type === 'multiple_choice' ? 'Trắc nghiệm'
+                        : q.type === 'true_false' ? 'Đúng/Sai'
+                        : q.type === 'essay' ? 'Tự luận' : 'Trả lời ngắn'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-600">{getDifficultyLabel(q.difficulty)}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold text-slate-700">
+                    {q.avg_score ?? '—'} / {q.max_score}
+                  </td>
+                  <td className={`px-4 py-2.5 text-right font-bold ${getCorrectRateColor(rate)}`}>
+                    {rate}%
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-slate-500">{q.answer_count}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 // ── Thống kê cho giáo viên / tổ trưởng ──────────────────────────
 const TeacherStatistics = () => {
   const [exams, setExams] = useState([]);
   const [selectedExam, setSelectedExam] = useState('');
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [questionAnalysis, setQuestionAnalysis] = useState([]);
   const [loadingExams, setLoadingExams] = useState(true);
+  const [selectedScheduleId, setSelectedScheduleId] = useState(null);
 
   useEffect(() => {
     examService.getAll({ status: 'approved' })
@@ -360,17 +432,40 @@ const TeacherStatistics = () => {
 
   const handleSelectExam = async (examId) => {
     setSelectedExam(examId);
-    if (!examId) { setSummary(null); return; }
+    if (!examId) { setSummary(null); setQuestionAnalysis([]); setSelectedScheduleId(null); return; }
     setLoading(true);
     try {
       const schedules = await examService.getSchedules({ exam_id: examId });
       if (schedules?.length > 0) {
-        const data = await statisticsService.getScheduleSummary(schedules[0].id);
-        setSummary(data);
+        const scheduleId = schedules[0].id;
+        setSelectedScheduleId(scheduleId);
+        const [summaryData, analysisData] = await Promise.all([
+          statisticsService.getScheduleSummary(scheduleId),
+          statisticsService.getQuestionAnalysis(scheduleId).catch(() => ({ questions: [] }))
+        ]);
+        setSummary(summaryData);
+        setQuestionAnalysis(analysisData.questions || []);
       } else {
         setSummary(null);
+        setQuestionAnalysis([]);
+        setSelectedScheduleId(null);
       }
-    } catch { setSummary(null); } finally { setLoading(false); }
+    } catch { setSummary(null); setQuestionAnalysis([]); setSelectedScheduleId(null); } finally { setLoading(false); }
+  };
+
+  const handleExportExcel = async (scheduleId) => {
+    if (!scheduleId) return;
+    try {
+      const blob = await statisticsService.exportScheduleExcel(scheduleId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bang-diem-${scheduleId}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Xuất Excel thất bại: ' + err.message);
+    }
   };
 
   const scoreDistribution = summary ? [
@@ -425,9 +520,19 @@ const TeacherStatistics = () => {
             </div>
           )}
 
+          <QuestionAnalysisTable questions={questionAnalysis} />
+
           {summary.results?.length > 0 && (
             <div className="rounded-xl bg-white p-5 shadow-sm">
-              <h3 className="mb-4 font-semibold text-slate-900">Danh sách kết quả học sinh</h3>
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="font-semibold text-slate-900">Danh sách kết quả học sinh</h3>
+                <button
+                  onClick={() => handleExportExcel(selectedScheduleId)}
+                  className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                >
+                  📥 Xuất Excel
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-400">
@@ -437,6 +542,7 @@ const TeacherStatistics = () => {
                       <th className="px-4 py-2 text-right">Điểm</th>
                       <th className="px-4 py-2 text-right">%</th>
                       <th className="px-4 py-2 text-right">Xếp loại</th>
+                      <th className="px-4 py-2 text-center">Hành động</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -454,6 +560,13 @@ const TeacherStatistics = () => {
                           <td className="px-4 py-3 text-right font-semibold">{r.total_score}/{r.max_score}</td>
                           <td className={`px-4 py-3 text-right font-bold ${gc}`}>{p}%</td>
                           <td className={`px-4 py-3 text-right text-xs font-medium ${gc}`}>{grade}</td>
+                          <td className="px-4 py-3 text-center">
+                            {r.submission_id && (
+                              <Link to={`/submissions/${r.submission_id}/view`} className="inline-flex items-center gap-1 rounded-md bg-brand-50 px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-100">
+                                👁 Xem bài
+                              </Link>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}

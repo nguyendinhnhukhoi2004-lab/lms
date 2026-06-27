@@ -42,43 +42,30 @@ const findAll = async () => {
 };
 
 // Gán môn học cho giáo viên (upsert)
-const assign = async (teacher_id, subject_ids) => {
-  const client = require('../config/db').getClient
-    ? await require('../config/db').getClient()
-    : null;
-
-  // Nếu không có getClient, dùng query thông thường
-  if (!client) {
-    for (const subject_id of subject_ids) {
-      await query(
-        `INSERT INTO teacher_subjects (teacher_id, subject_id)
-         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [teacher_id, subject_id]
-      );
-    }
-    return findByTeacher(teacher_id);
-  }
+const assign = async (teacher_id, subject_ids, client = null) => {
+  const dbClient = client || await require('../config/db').getClient();
+  const shouldRelease = !client;
 
   try {
-    await client.query('BEGIN');
+    if (shouldRelease) await dbClient.query('BEGIN');
     // Xóa phân công cũ, thêm mới
-    await client.query(
+    await dbClient.query(
       'DELETE FROM teacher_subjects WHERE teacher_id = $1',
       [teacher_id]
     );
     for (const subject_id of subject_ids) {
-      await client.query(
+      await dbClient.query(
         `INSERT INTO teacher_subjects (teacher_id, subject_id)
          VALUES ($1, $2) ON CONFLICT DO NOTHING`,
         [teacher_id, subject_id]
       );
     }
-    await client.query('COMMIT');
+    if (shouldRelease) await dbClient.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (shouldRelease) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (shouldRelease) dbClient.release();
   }
   return findByTeacher(teacher_id);
 };
@@ -124,43 +111,56 @@ const findAllHeads = async () => {
 };
 
 // Gán môn cho tổ trưởng
-const assignHead = async (head_id, subject_names) => {
-  const client = await require('../config/db').getClient();
+const assignHead = async (head_id, subject_names, client = null) => {
+  const dbClient = client || await require('../config/db').getClient();
+  const shouldRelease = !client;
+  
   try {
-    await client.query('BEGIN');
-    await client.query('DELETE FROM head_subjects WHERE head_id=$1', [head_id]);
+    if (shouldRelease) await dbClient.query('BEGIN');
+    await dbClient.query('DELETE FROM head_subjects WHERE head_id=$1', [head_id]);
     for (const subject_name of subject_names) {
-      await client.query(
+      await dbClient.query(
         `INSERT INTO head_subjects (head_id, subject_name)
          VALUES ($1, $2) ON CONFLICT DO NOTHING`,
         [head_id, subject_name.trim()]
       );
     }
-    await client.query('COMMIT');
+    if (shouldRelease) await dbClient.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (shouldRelease) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (shouldRelease) dbClient.release();
   }
   return findByHead(head_id);
 };
 
 // ── HELPER ────────────────────────────────────────────────────────
 
-// Kiểm tra xem user có quyền tác động lên môn học này không
 const checkAccess = async (user_id, role, subject_id) => {
   if (role === 'admin') return true;
+
+  // Lấy các môn được phân công dạy
+  const assignedAsTeacher = await findSubjectIdsByTeacher(user_id);
+  
   if (role === 'teacher') {
-    const assigned = await findSubjectIdsByTeacher(user_id);
-    return assigned.includes(subject_id);
+    return assignedAsTeacher.includes(subject_id);
   }
+  
   if (role === 'department_head') {
+    // Ktra xem có phải là tổ trưởng môn này không
     const headSubjects = await findSubjectNamesByHead(user_id);
-    if (headSubjects.length === 0) return false;
-    const { rows } = await query(`SELECT id FROM subjects WHERE name = ANY($1)`, [headSubjects]);
-    const allowedIds = rows.map(r => r.id);
-    return allowedIds.includes(subject_id);
+    let allowedAsHead = false;
+    if (headSubjects.length > 0) {
+      const conditions = headSubjects.map((name, i) => `name ILIKE $${i + 1}`).join(' OR ');
+      const params = headSubjects.map(name => `${name.trim()}%`);
+      const { rows } = await query(`SELECT id FROM subjects WHERE ${conditions}`, params);
+      const allowedIds = rows.map(r => r.id);
+      allowedAsHead = allowedIds.includes(subject_id);
+    }
+    
+    // Nếu là tổ trưởng môn này, HOẶC được phân công dạy môn này, đều có quyền
+    return allowedAsHead || assignedAsTeacher.includes(subject_id);
   }
   return false;
 };

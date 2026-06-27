@@ -31,16 +31,19 @@ const findAll = async ({ subject_id, status, created_by, subject_ids, subject_na
   if (subject_id)    { params.push(subject_id);    sql += ` AND e.subject_id  = $${params.length}`; }
   if (status)        { params.push(status);         sql += ` AND e.status      = $${params.length}`; }
   if (created_by)    { params.push(created_by);     sql += ` AND e.created_by  = $${params.length}`; }
-  // Giáo viên: chỉ thấy đề trong các môn được phân công
-  if (subject_ids && subject_ids.length > 0) {
-    params.push(subject_ids);
-    sql += ` AND e.subject_id = ANY($${params.length})`;
-  }
-  // Tổ trưởng: chỉ thấy đề thuộc tên môn mình phụ trách (vd: "Toán" → Toán 10+11+12)
-  if (subject_names && subject_names.length > 0) {
-    const patterns = subject_names.map(name => `${name.trim()}%`);
-    params.push(patterns);
-    sql += ` AND s.name ILIKE ANY($${params.length})`;
+  // Phân quyền cho giáo viên / tổ trưởng
+  if ((subject_ids && subject_ids.length > 0) || (subject_names && subject_names.length > 0)) {
+    const conditions = [];
+    if (subject_ids && subject_ids.length > 0) {
+      params.push(subject_ids);
+      conditions.push(`e.subject_id = ANY($${params.length})`);
+    }
+    if (subject_names && subject_names.length > 0) {
+      const patterns = subject_names.map(name => `${name.trim()}%`);
+      params.push(patterns);
+      conditions.push(`s.name ILIKE ANY($${params.length})`);
+    }
+    sql += ` AND (${conditions.join(' OR ')})`;
   }
 
   sql += ' GROUP BY e.id, e.created_by, s.name, s.grade, u.full_name, a.full_name';
@@ -106,6 +109,17 @@ const create = async ({ title, subject_id, created_by, duration_minutes, descrip
   return rows[0];
 };
 
+// Cập nhật thông tin cơ bản của đề thi (chỉ khi đang là draft)
+const updateInfo = async (id, { title, subject_id, duration_minutes, description }) => {
+  const { rows } = await query(
+    `UPDATE exams 
+     SET title = $1, subject_id = $2, duration_minutes = $3, description = $4, updated_at = NOW()
+     WHERE id = $5 AND status = 'draft'
+     RETURNING *`,
+    [title, subject_id, duration_minutes, description || null, id]
+  );
+  return rows[0] || null;
+};
 // Thêm câu hỏi vào đề — dùng transaction để đảm bảo toàn vẹn
 // questions: [{question_id, score}]
 const addQuestions = async (exam_id, questions) => {
@@ -409,7 +423,7 @@ const deleteMatrix = async (exam_id) => {
 };
 
 module.exports = {
-  findAll, findById, create, addQuestions,
+  findAll, findById, create, updateInfo, addQuestions,
   getTotalScore, submitForApproval, approve, reject, archive, deleteExam,
   findSchedules, findScheduleById, findScheduleByExamClass, findActiveScheduleForStudent, createSchedule, cancelSchedule, updateSchedule, deleteSchedule,
   getMatrix, getMatrixSummary, setMatrix, deleteMatrix,

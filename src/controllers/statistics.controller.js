@@ -123,9 +123,10 @@ const getMyProgress = async (req, res) => {
 // GET /api/statistics/my-summary (học sinh tự xem tóm tắt theo môn)
 const getMySummary = async (req, res) => {
   try {
-    const [subjectRows, progressGrouped] = await Promise.all([
+    const [subjectRows, progressGrouped, pendingManualCount] = await Promise.all([
       StatsModel.getStudentSummary(req.user.id),
       StatsModel.getStudentProgress(req.user.id),
+      StatsModel.getPendingManualCount(req.user.id),
     ]);
     // Flatten grouped object thành array phẳng, sắp xếp theo thời gian
     const recentResults = Object.values(progressGrouped || {})
@@ -147,7 +148,7 @@ const getMySummary = async (req, res) => {
       avg_score:       avgScore ? parseFloat(avgScore.toFixed(2)) : null,
       max_possible:    10,
       best_score:      bestScore,
-      pending_manual:  0,    // TODO: đếm bài thi có câu tự luận chưa chấm
+      pending_manual:  pendingManualCount,
       by_subject:      subjectRows,
       recent_results:  recentResults || [],
     });
@@ -201,6 +202,74 @@ const getQuestionBankStats = async (req, res) => {
   }
 };
 
+const exportScheduleExcel = async (req, res) => {
+  try {
+    const StatsModel = require('../models/statistics.model');
+    const { query } = require('../config/db');
+    const results = await StatsModel.getScheduleResults(req.params.scheduleId);
+    const summary = await StatsModel.getScheduleSummary(req.params.scheduleId);
+
+    // Lấy thông tin kỳ thi
+    const { rows: infoRows } = await query(`
+      SELECT e.title AS exam_title, sub.name AS subject_name, es.start_time
+      FROM exam_schedules es
+      JOIN exams e ON es.exam_id = e.id
+      JOIN subjects sub ON e.subject_id = sub.id
+      WHERE es.id = $1
+    `, [req.params.scheduleId]);
+    const examInfo = infoRows[0] || {};
+
+    // Dùng xlsx đã có sẵn trong dự án (exams.controller đang dùng)
+    const xlsx = require('xlsx');
+
+    // Header hàng 1: thông tin kỳ thi
+    const rows = [
+      [`Bảng điểm: ${examInfo.exam_title || ''}`],
+      [`Môn: ${examInfo.subject_name || ''}  |  Lớp: ${results[0]?.class_name || 'Tất cả'}  |  Ngày thi: ${examInfo.start_time ? new Date(examInfo.start_time).toLocaleDateString('vi-VN') : ''}`],
+      [`Số học sinh: ${summary.total_students || 0}  |  Điểm TB: ${summary.avg_score || 0}  |  Cao nhất: ${summary.max_score_achieved || 0}  |  Thấp nhất: ${summary.min_score_achieved || 0}`],
+      [], // hàng trống
+      // Header cột
+      ['STT', 'Họ và tên', 'Lớp', 'Điểm', 'Điểm tối đa', 'Tỉ lệ %', 'Xếp loại'],
+    ];
+
+    // Dữ liệu từng học sinh
+    results.forEach((r, i) => {
+      const pct = r.max_score ? Math.round((r.total_score / r.max_score) * 100) : 0;
+      const rank = pct >= 90 ? 'Xuất sắc'
+        : pct >= 80 ? 'Giỏi'
+        : pct >= 65 ? 'Khá'
+        : pct >= 50 ? 'Trung bình' : 'Yếu';
+      rows.push([i + 1, r.student_name, r.class_name, r.total_score, r.max_score, `${pct}%`, rank]);
+    });
+
+    const ws = xlsx.utils.aoa_to_sheet(rows);
+
+    // Độ rộng cột
+    ws['!cols'] = [
+      { wch: 5 },   // STT
+      { wch: 30 },  // Họ tên
+      { wch: 10 },  // Lớp
+      { wch: 10 },  // Điểm
+      { wch: 12 },  // Tối đa
+      { wch: 10 },  // Tỉ lệ
+      { wch: 12 },  // Xếp loại
+    ];
+
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, 'Bảng điểm');
+
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', `attachment; filename="bang-diem-${req.params.scheduleId}.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    return res.send(buffer);
+
+  } catch (err) {
+    console.error('exportScheduleExcel error:', err);
+    return res.status(500).json({ message: 'Lỗi server' });
+  }
+};
+
 module.exports = {
   getScheduleSummary,
   getScoreDistribution,
@@ -212,4 +281,5 @@ module.exports = {
   getStudentProgress,
   getSchoolOverview,
   getQuestionBankStats,
+  exportScheduleExcel,
 };

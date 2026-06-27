@@ -292,7 +292,8 @@ const submitExam = async (req, res) => {
           if (r.similarity_score !== null) {
             // Lưu điểm gợi ý và độ tương đồng
             await SubmissionModel.saveSimilarityScore(
-              req.params.id, r.question_id, r.similarity_score, r.auto_score
+              req.params.id, r.question_id, r.similarity_score, r.auto_score,
+              { keyword_coverage: r.keyword_coverage, keywords_found: r.keywords_found, ai_note: r.ai_note }
             );
             // Gắn auto_score làm final_score tự động (học sinh nhận điểm ngay)
             await SubmissionModel.updateFinalScore(req.params.id, r.question_id, r.auto_score);
@@ -370,7 +371,8 @@ const gradeEssaysAsync = async (submission_id, essayQuestions, answers) => {
   for (const r of batchResults) {
     if (r.similarity_score !== null) {
       await SubmissionModel.saveSimilarityScore(
-        submission_id, r.question_id, r.similarity_score, r.auto_score
+        submission_id, r.question_id, r.similarity_score, r.auto_score,
+        { keyword_coverage: r.keyword_coverage, keywords_found: r.keywords_found, ai_note: r.ai_note }
       );
     } else {
       // NLP thất bại — đánh dấu cần chấm thủ công
@@ -471,6 +473,7 @@ const getResult = async (req, res) => {
     const detailedAnswers = answers.map(a => ({
       ...a,
       max_score:     examQuestionMap[a.question_id]?.score,
+      options:       examQuestionMap[a.question_id]?.options, // Bổ sung options cho trắc nghiệm
       sample_answer: a.correct_answer?.sample || null,
       // Chỉ trả về correct_answer nếu được phép xem lại
       correct_answer: canReview ? a.correct_answer : undefined,

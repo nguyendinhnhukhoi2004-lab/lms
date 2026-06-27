@@ -31,16 +31,24 @@ const getAll = async (req, res) => {
     } else if (req.user.role === 'student') {
       return res.status(403).json({ message: 'Học sinh không có quyền xem ngân hàng câu hỏi' });
     } else if (req.user.role === 'department_head') {
-      // Tổ trưởng chỉ thấy câu hỏi thuộc môn mình phụ trách
+      // Lấy các môn được phân công dạy (với tư cách giáo viên)
+      const assigned = await TeacherSubjectModel.findSubjectIdsByTeacher(req.user.id);
+      
+      // Lấy các môn là tổ trưởng
       const headSubjects = await TeacherSubjectModel.findSubjectNamesByHead(req.user.id);
-      if (headSubjects.length === 0) return res.status(200).json({ questions: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+      
       const { query } = require('../config/db');
-      const { rows } = await query(
-        `SELECT id FROM subjects WHERE name = ANY($1)`,
-        [headSubjects]
-      );
-      if (rows.length === 0) return res.status(200).json({ questions: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
-      subject_ids = rows.map(r => r.id);
+      let allowedIds = [...assigned];
+
+      if (headSubjects.length > 0) {
+        const conditions = headSubjects.map((name, i) => `name ILIKE $${i + 1}`).join(' OR ');
+        const params = headSubjects.map(name => `${name.trim()}%`);
+        const { rows } = await query(`SELECT id FROM subjects WHERE ${conditions}`, params);
+        allowedIds = [...new Set([...allowedIds, ...rows.map(r => r.id)])];
+      }
+      
+      if (allowedIds.length === 0) return res.status(200).json({ questions: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+      subject_ids = allowedIds;
     }
 
     const result = await QuestionModel.findAll({

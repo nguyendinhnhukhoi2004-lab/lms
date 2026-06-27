@@ -272,8 +272,24 @@ const getQuestionBankStatsByTeacher = async (teacher_id) => {
   };
 };
 
+const getPendingManualCount = async (student_id) => {
+  const { rows } = await query(
+    `SELECT COUNT(DISTINCT sub.id) AS pending_count
+     FROM submissions sub
+     JOIN submission_answers sa ON sa.submission_id = sub.id
+     JOIN questions q ON q.id = sa.question_id
+     WHERE sub.student_id = $1
+       AND sub.status = 'submitted'
+       AND q.type = 'essay'
+       AND (sa.similarity_score = -1 OR sa.final_score IS NULL)`,
+    [student_id]
+  );
+  return parseInt(rows[0]?.pending_count || 0, 10);
+};
+
 module.exports = {
   getScheduleSummary,
+  getPendingManualCount,
   getScoreDistribution,
   getQuestionAnalysis,
   getClassHistory,

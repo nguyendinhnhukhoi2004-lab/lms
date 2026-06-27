@@ -7,7 +7,7 @@ const mammoth  = require('mammoth');
 const { validateQuestion } = require('./questionValidator');
 
 // ── Hằng số ───────────────────────────────────────────────────────
-const VALID_TYPES       = ['multiple_choice', 'true_false', 'essay'];
+const VALID_TYPES       = ['multiple_choice', 'true_false', 'essay', 'short_answer'];
 // CV 7991/BGDĐT-GDTrH ngày 17/12/2024: 3 mức độ nhận thức (Biết / Hiểu / Vận dụng)
 const VALID_DIFFICULTIES = ['nhan_biet', 'thong_hieu', 'van_dung'];
 
@@ -52,6 +52,10 @@ const TYPE_MAP = {
   'tự luận':         'essay',
   'tu luan':         'essay',
   'tl':              'essay',
+  'short_answer':    'short_answer',
+  'trả lời ngắn':    'short_answer',
+  'tra loi ngan':    'short_answer',
+  'tln':             'short_answer',
 };
 
 const normalizeDifficulty = (val) =>
@@ -59,6 +63,21 @@ const normalizeDifficulty = (val) =>
 
 const normalizeType = (val) =>
   TYPE_MAP[(val || '').toString().trim().toLowerCase()] || null;
+
+// Parse tiền tố Azota trong mệnh đề đúng/sai
+// Ví dụ: "[1,NB] Nội dung mệnh đề" → { order: 1, difficulty: 'nhan_biet', cleanStatement: 'Nội dung mệnh đề' }
+// Nếu không có tiền tố → { order: null, difficulty: null, cleanStatement: 'Nội dung mệnh đề' }
+const parseTrueFalsePrefix = (statementText) => {
+  const match = statementText.match(/^\[(\d+)\s*,\s*(NB|TH|VD|VDC|nhan_biet|thong_hieu|van_dung|van_dung_cao)\]/i);
+  if (!match) {
+    return { order: null, difficulty: null, cleanStatement: statementText.trim() };
+  }
+  return {
+    order:          parseInt(match[1]),
+    difficulty:     normalizeDifficulty(match[2]),
+    cleanStatement: statementText.slice(match[0].length).trim(),
+  };
+};
 
 // ── PARSE EXCEL ────────────────────────────────────────────────────
 // Format cột (tên cột ở hàng 1):
@@ -143,7 +162,15 @@ const parseExcel = (buffer) => {
         errors.push({ row: rowNum, error: 'Câu đúng/sai cần ít nhất 2 mệnh đề' });
         return;
       }
-      options = stmts.map((statement, i) => ({ id: String(i + 1), statement }));
+      options = stmts.map((rawStmt, i) => {
+        const { order, difficulty: stmtDifficulty, cleanStatement } = parseTrueFalsePrefix(rawStmt);
+        return {
+          id:        String(i + 1),
+          statement: cleanStatement,
+          ...(stmtDifficulty !== null && { difficulty: stmtDifficulty }),
+          ...(order !== null           && { order }),
+        };
+      });
 
       // correct: "T,F,T,F" hoặc "true,false,true,false" hoặc "1,0,1,0"
       const answerRaw = correct.split(',').map(s => s.trim().toLowerCase());
@@ -178,6 +205,17 @@ const parseExcel = (buffer) => {
       }
       options        = null;
       correct_answer = { sample, keywords: kws };
+    }
+
+    if (type === 'short_answer') {
+      if (!correct) {
+        errors.push({ row: rowNum, error: 'Câu trả lời ngắn cần có đáp án (cột correct)' });
+        return;
+      }
+      options = null;
+      correct_answer = {
+        accepted: correct.split(',').map(s => s.trim()).filter(Boolean),
+      };
     }
 
     // Validate lại bằng questionValidator
@@ -245,7 +283,7 @@ const parseWord = async (buffer) => {
     const qNum       = bi + 1;
 
     // Parse header — lấy type và difficulty
-    const typeMatch  = headerLine.match(/\[(MCQ|TN|DS|TL|multiple_choice|true_false|essay)\]/i);
+    const typeMatch  = headerLine.match(/\[(MCQ|TN|DS|TL|TLN|multiple_choice|true_false|essay|short_answer)\]/i);
     // VDC vẫn nhận nhưng được map → van_dung (tương thích file .docx cũ)
     const diffMatch  = headerLine.match(/\[(NB|TH|VD|VDC|nhan_biet|thong_hieu|van_dung|van_dung_cao)\]/i);
 
@@ -327,10 +365,16 @@ const parseWord = async (buffer) => {
         errors.push({ row: qNum, error: `Câu ${qNum}: Cần ít nhất 2 mệnh đề (a)/b)/c)/d))` });
         return;
       }
-      options = stmtLines.map((l, i) => ({
-        id:        String(i + 1),
-        statement: l.replace(/^[a-d1-4][.)]\s+/i, '').trim(),
-      }));
+      options = stmtLines.map((l, i) => {
+        const rawStatement = l.replace(/^[a-d1-4][.)]\s+/i, '').trim();
+        const { order, difficulty: stmtDifficulty, cleanStatement } = parseTrueFalsePrefix(rawStatement);
+        return {
+          id:        String(i + 1),
+          statement: cleanStatement,
+          ...(stmtDifficulty !== null && { difficulty: stmtDifficulty }),
+          ...(order !== null           && { order }),
+        };
+      });
 
       const answerRaw = bodyLines[answerLineIdx]
         .replace(/^(đáp án|da|dap an)\s*:/i, '').trim();
@@ -378,6 +422,28 @@ const parseWord = async (buffer) => {
       }
       options        = null;
       correct_answer = { sample, keywords: kws };
+    }
+
+    if (type === 'short_answer') {
+      const answerLineIdx = bodyLines.findIndex(l => /^(đáp án|da|dap an)\s*:/i.test(l));
+      if (answerLineIdx === -1) {
+        errors.push({ row: qNum, error: `Câu ${qNum}: Thiếu dòng "Đáp án: ..."` });
+        return;
+      }
+
+      const contentLines = bodyLines.filter((_, i) => i < answerLineIdx);
+      content = contentLines.join(' ').trim();
+
+      const answerRaw = bodyLines[answerLineIdx].replace(/^(đáp án|da|dap an)\s*:/i, '').trim();
+      if (!answerRaw) {
+        errors.push({ row: qNum, error: `Câu ${qNum}: Đáp án không được để trống` });
+        return;
+      }
+
+      options = null;
+      correct_answer = {
+        accepted: answerRaw.split(',').map(s => s.trim()).filter(Boolean),
+      };
     }
 
     if (!content) {

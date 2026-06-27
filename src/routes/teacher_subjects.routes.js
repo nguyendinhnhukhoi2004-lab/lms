@@ -64,4 +64,13 @@ router.put(
   Controller.assignToHead
 );
 
+// POST /api/teacher-subjects/teacher/:id/full-assign — phân công toàn diện
+// Body: { assignments: [...], head_subjects: [...] }
+router.post(
+  '/teacher/:id/full-assign',
+  authenticate,
+  authorize('admin'),
+  Controller.fullAssign
+);
+
 module.exports = router;

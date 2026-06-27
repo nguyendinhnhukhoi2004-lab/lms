@@ -147,21 +147,20 @@ const ExamBuilderModal = ({ exam, onSave, onClose }) => {
   const [bank, setBank]                 = useState([]);
   const [bankLoading, setBankLoading]   = useState(false);
   const [filters, setFilters]           = useState({ difficulty: '', type: '' });
+  const isReadonly  = exam.status !== 'draft';
   const [search, setSearch]             = useState('');
   const [editingScore, setEditingScore] = useState(null);
   const [saving, setSaving]             = useState(false);
   const [error, setError]               = useState('');
-  const [tab, setTab]                   = useState('bank');
+  const [tab, setTab]                   = useState((isReadonly || exam?.questions?.length > 0) ? 'selected' : 'bank');
 
   const totalScore  = selected.reduce((s, i) => s + parseFloat(i.score || 0), 0);
   const selectedIds = new Set(selected.map(i => i.question.id));
-  const isReadonly  = exam.status !== 'draft';
 
   useEffect(() => {
     if (exam?.questions?.length) {
       setSelected(exam.questions.map(q => ({ question: q, score: q.score || 1 })));
     }
-    loadBank();
   }, []);
 
   const loadBank = useCallback(async () => {
@@ -206,16 +205,120 @@ const ExamBuilderModal = ({ exam, onSave, onClose }) => {
 
   const statsByType = selected.reduce((acc, i) => { acc[i.question.type] = (acc[i.question.type]||0)+1; return acc; }, {});
 
+  const renderQuestionDetails = (q) => {
+    // Parse correct_answer nếu còn là string JSON
+    let ca = q.correct_answer;
+    if (typeof ca === 'string') {
+      try { ca = JSON.parse(ca); } catch (e) {
+        if (q.type === 'multiple_choice') ca = { selected: [ca] };
+        else if (q.type === 'short_answer') ca = { accepted: ca.split(',').map(s => s.trim()) };
+        else ca = {};
+      }
+    }
+
+    // Đáp án đúng của trắc nghiệm
+    const correctSelected = ca?.selected || [];
+
+    // Lấy options để hiển thị — hỗ trợ cả 2 format:
+    // Format mới: q.options = [{id:'A', text:'...'}, ...]
+    // Format cũ:  q.options = null, ca.options = ['Tập Z', 'Tập N*', ...]
+    let displayOptions = [];
+    if (Array.isArray(q.options) && q.options.length > 0) {
+      displayOptions = q.options.map((opt, i) => ({
+        label: typeof opt === 'object' ? (opt.id || String.fromCharCode(65 + i)) : String.fromCharCode(65 + i),
+        text:  typeof opt === 'object' ? (opt.text || '') : opt,
+      }));
+    } else if (Array.isArray(ca?.options) && ca.options.length > 0) {
+      displayOptions = ca.options.map((text, i) => ({
+        label: String.fromCharCode(65 + i),
+        text:  typeof text === 'string' ? text : (text?.text || ''),
+      }));
+    }
+
+    return (
+      <div className="mt-2 text-sm text-slate-700">
+
+        {/* Trắc nghiệm — tô xanh đáp án đúng */}
+        {q.type === 'multiple_choice' && displayOptions.length > 0 && (
+          <div className="mb-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+            {displayOptions.map(({ label, text }) => {
+              const isCorrect = correctSelected.includes(label);
+              return (
+                <div key={label}
+                  className={`flex items-start gap-1.5 rounded-lg px-2 py-1 transition
+                    ${isCorrect
+                      ? 'bg-emerald-100 font-semibold text-emerald-800 ring-1 ring-emerald-300'
+                      : 'text-slate-700'}`}
+                >
+                  <span className={`shrink-0 font-bold ${isCorrect ? 'text-emerald-700' : 'text-slate-500'}`}>
+                    {label}.
+                  </span>
+                  <MathViewer htmlContent={text} className="inline" />
+                  {isCorrect && <span className="ml-auto shrink-0 text-emerald-600">✓</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Đúng/Sai — hiện Đ/S màu xanh/đỏ cạnh mỗi mệnh đề */}
+        {q.type === 'true_false' && Array.isArray(q.options) && (
+          <div className="mb-2 flex flex-col gap-1">
+            {q.options.map((opt, i) => {
+              const label = String.fromCharCode(97 + i);
+              const stmt  = typeof opt === 'string' ? opt : (opt.statement || '');
+              // Hỗ trợ cả key số "1","2" lẫn key chữ "a","b"
+              const ans   = ca?.answers?.[String(i + 1)] ?? ca?.answers?.[label];
+              return (
+                <div key={i} className="flex items-center gap-2">
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-bold
+                    ${ans === true  ? 'bg-green-100 text-green-700'
+                    : ans === false ? 'bg-red-100 text-red-700'
+                    : 'bg-slate-100 text-slate-400'}`}>
+                    {ans === true ? 'Đ' : ans === false ? 'S' : '?'}
+                  </span>
+                  <span>
+                    <span className="font-semibold">{label})</span>{' '}
+                    <MathViewer htmlContent={stmt} className="inline" />
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Dòng tóm tắt đáp án đúng — hiện cho tất cả loại */}
+        <div className="mt-1 rounded bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 inline-block">
+          {q.type === 'multiple_choice' && `✓ Đáp án đúng: ${correctSelected.join(', ')}`}
+          {q.type === 'true_false'      && `Đáp án: ${
+            ca?.answers
+              ? Object.entries(ca.answers).map(([k, v]) => `${k}:${v ? 'Đ' : 'S'}`).join(', ')
+              : ''
+          }`}
+          {q.type === 'short_answer'    && `Đáp án: ${ca?.accepted?.join(' / ') || ''}`}
+          {q.type === 'essay'           && (
+            ca?.keywords?.length
+              ? `Từ khóa: ${ca.keywords.join(', ')}`
+              : `Đáp án mẫu: ${ca?.sample || ''}`
+          )}
+        </div>
+
+      </div>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-50">
       {/* Header */}
       <div className="flex items-center justify-between border-b bg-white px-6 py-3 shadow-sm">
         <div>
           <div className="flex items-center gap-2">
-            <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">✏️ Thủ công</span>
+            <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">{isReadonly ? '📄 Xem đề' : '✏️ Thủ công'}</span>
             <h3 className="text-base font-bold text-slate-900">{exam.title}</h3>
           </div>
-          <p className="text-xs text-slate-500">{exam.subject_name} · {exam.duration_minutes} phút</p>
+          <p className="text-xs text-slate-500">
+            {exam.subject_name} · {exam.duration_minutes} phút · Tổng điểm: <span className="font-semibold text-slate-700">{fmt(totalScore)}/10đ</span>
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {error && <span className="max-w-xs text-xs text-red-600">{error}</span>}
@@ -232,18 +335,20 @@ const ExamBuilderModal = ({ exam, onSave, onClose }) => {
       </div>
 
       {/* Tab mobile */}
-      <div className="flex border-b bg-white lg:hidden">
-        {['bank','selected'].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`flex-1 py-2.5 text-sm font-medium transition ${tab === t ? 'border-b-2 border-brand-600 text-brand-700' : 'text-slate-500'}`}>
-            {t === 'bank' ? `Ngân hàng (${filteredBank.length})` : `Đề thi (${selected.length} câu · ${fmt(totalScore)}đ)`}
-          </button>
-        ))}
-      </div>
+      {!isReadonly && (
+        <div className="flex border-b bg-white lg:hidden">
+          {['bank','selected'].map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className={`flex-1 py-2.5 text-sm font-medium transition ${tab === t ? 'border-b-2 border-brand-600 text-brand-700' : 'text-slate-500'}`}>
+              {t === 'bank' ? `Ngân hàng (${filteredBank.length})` : `Đề thi (${selected.length} câu · ${fmt(totalScore)}đ)`}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {/* Cột trái: Ngân hàng */}
-        <div className={`flex flex-col border-r bg-white lg:w-[55%] ${tab === 'selected' ? 'hidden lg:flex' : 'flex w-full'}`}>
+        <div className={`flex flex-col border-r bg-white lg:w-[55%] ${isReadonly ? 'hidden' : (tab === 'selected' ? 'hidden lg:flex' : 'flex w-full')}`}>
           <div className="space-y-2 border-b p-4">
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="🔍 Tìm nội dung câu hỏi..."
@@ -275,6 +380,7 @@ const ExamBuilderModal = ({ exam, onSave, onClose }) => {
                     <span className={`text-[10px] font-semibold ${DIFF_COLORS[q.difficulty]}`}>{DIFF_LABELS[q.difficulty]}</span>
                   </div>
                   <MathViewer htmlContent={q.content} className="line-clamp-2 text-sm text-slate-800" />
+                  {renderQuestionDetails(q)}
                 </div>
                 {!isReadonly && (
                   <button onClick={() => handleAdd(q)}
@@ -332,7 +438,8 @@ const ExamBuilderModal = ({ exam, onSave, onClose }) => {
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${TYPE_COLORS[item.question.type]}`}>{TYPE_LABELS[item.question.type]}</span>
                     <span className={`text-[10px] font-semibold ${DIFF_COLORS[item.question.difficulty]}`}>{DIFF_LABELS[item.question.difficulty]}</span>
                   </div>
-                  <p className="text-sm text-slate-800 line-clamp-2">{item.question.content}</p>
+                  <MathViewer htmlContent={item.question.content} className={`text-sm text-slate-800 ${isReadonly ? '' : 'line-clamp-2'}`} />
+                  {renderQuestionDetails(item.question)}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
                   {!isReadonly && (
@@ -700,9 +807,7 @@ const ScheduleModal = ({ exam, classes, onClose }) => {
 
   const toIsoFromDatetimeLocal = (datetimeLocal) => {
     if (!datetimeLocal) return '';
-    // Keep the local datetime string without converting to UTC (avoid shifting timezone)
-    // datetimeLocal format: "YYYY-MM-DDTHH:MM" -> return "YYYY-MM-DDTHH:MM:SS"
-    return `${datetimeLocal}:00`;
+    return new Date(datetimeLocal).toISOString();
   };
 
   useEffect(() => {
@@ -1362,16 +1467,18 @@ const ExamManagement = () => {
   };
 
   const handleOpenBuilder = async (exam) => {
-    try { const detail = await examService.getById(exam.id); setShowBuilder(detail); }
+    try { const detail = await examService.getById(exam.id); setShowBuilder(detail.exam || detail); }
     catch { setShowBuilder(exam); }
   };
 
   const handleSubmitApproval = async (id) => {
-    try { await examService.submitForApproval(id); loadExams(); }
+    if (!window.confirm('Bạn có chắc chắn muốn gửi duyệt đề thi này?')) return;
+    try { await examService.submit(id); loadExams(); }
     catch (e) { alert(e.message); }
   };
 
   const handleApprove = async (id) => {
+    if (!window.confirm('Bạn có chắc chắn muốn duyệt đề thi này?')) return;
     try { await examService.approve(id); loadExams(); }
     catch (e) { alert(e.message); }
   };
@@ -1416,6 +1523,20 @@ const ExamManagement = () => {
     }
   };
 
+  const handleExportWord = async (id, title) => {
+    try {
+      const blob = await examService.exportWord(id);
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `De_Thi_${title}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Không thể xuất file Word: ' + e.message);
+    }
+  };
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -1425,6 +1546,10 @@ const ExamManagement = () => {
           <p className="text-sm text-slate-500">{exams.length} đề thi</p>
         </div>
         <div className="flex gap-2">
+          <a href="/template_import_cauhoi.docx" download
+            className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+            📥 Tải template Word
+          </a>
           <button onClick={() => setShowImport(true)}
             className="rounded-xl border border-brand-600 px-4 py-2.5 text-sm font-semibold text-brand-600 hover:bg-brand-50">
             ↑ Import file
@@ -1569,7 +1694,7 @@ const ExamManagement = () => {
                 )}
 
                 {/* Kích hoạt (Thường xuyên) */}
-                {(exam.status === 'approved' || exam.status === 'draft') && exam.exam_type === 'thuong_xuyen' && (
+                {exam.status === 'approved' && exam.exam_type === 'thuong_xuyen' && (
                   <button onClick={() => handleTriggerExam(exam.id)}
                     className="rounded-lg bg-orange-50 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-100">
                     ⚡ Kích hoạt
@@ -1581,6 +1706,16 @@ const ExamManagement = () => {
                   <button onClick={() => handleExportExcel(exam.id, exam.title)}
                     className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 ml-auto">
                     📥 Xuất Excel
+                  </button>
+                )}
+
+                {/* Xuất Word */}
+                {exam.question_count > 0 && (
+                  <button
+                    onClick={() => handleExportWord(exam.id, exam.title)}
+                    className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                  >
+                    📄 Xuất Word
                   </button>
                 )}
               </div>

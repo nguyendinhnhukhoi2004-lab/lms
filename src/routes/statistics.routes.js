@@ -31,6 +31,13 @@ router.get(
   authenticate, authorize(...TEACHER_UP),
   StatsController.getQuestionAnalysis
 );
+// GET /api/statistics/schedule/:scheduleId/export — xuất bảng điểm Excel
+router.get(
+  '/schedule/:scheduleId/export',
+  authenticate, authorize(...TEACHER_UP),
+  StatsController.exportScheduleExcel
+);
+
 // Endpoint tổng hợp — 1 request lấy hết (dùng cho trang báo cáo)
 router.get(
   '/schedule/:scheduleId/full',

@@ -369,7 +369,19 @@ const ExamScreen = ({ submissionId, examInfo, questions, savedAnswers, onSubmitD
   const [submitError, setSubmitError] = useState('');
   const saveTimeoutRef = useRef({});
 
-  const { display, urgent, remaining } = useCountdown(examInfo?.end_time, () => handleSubmit(true));
+  const { display, urgent, remaining } = useCountdown(examInfo?.end_time, async () => {
+    if (submissionId && status === 'in_progress') {
+      try {
+        await submissionService.submit(submissionId);
+        setStatus('submitted');
+        alert('⏰ Hết giờ! Bài thi đã được tự động nộp.');
+        // Refresh page or trigger done state
+        window.location.reload();
+      } catch (e) {
+        console.error('Auto-submit failed:', e);
+      }
+    }
+  });
 
   // Auto-save debounced
   const saveAnswer = useCallback(async (questionId, answer) => {

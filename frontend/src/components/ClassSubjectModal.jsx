@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { classSubjectService, subjectService, userService } from '../services/api';
+import { classSubjectService, subjectService, userService, teacherSubjectService } from '../services/api';
 
 const ClassSubjectModal = ({ classItem, onClose, onSave }) => {
   const [subjects, setSubjects] = useState([]);
   const [teachers, setTeachers] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [teacherSubjects, setTeacherSubjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -14,21 +15,27 @@ const ClassSubjectModal = ({ classItem, onClose, onSave }) => {
       try {
         setLoading(true);
         // Load all subjects and teachers concurrently
-        const [allSubjects, allUsers, currentAssignments] = await Promise.all([
+        const [allSubjects, allUsers, currentAssignments, ts] = await Promise.all([
           subjectService.getAll(),
           userService.getAll(),
-          classSubjectService.getByClass(classItem.id)
+          classSubjectService.getByClass(classItem.id),
+          teacherSubjectService.getAll()
         ]);
+        
+        setTeacherSubjects(ts.assignments || ts || []);
 
         // Only teachers and department heads can teach
-        const eligibleTeachers = allUsers.filter(u => u.role === 'teacher' || u.role === 'department_head');
+        const userList = allUsers.users || allUsers || [];
+        const eligibleTeachers = userList.filter(u => u.role === 'teacher' || u.role === 'department_head');
         setTeachers(eligibleTeachers);
 
-        // Sort subjects by grade then name
-        const sortedSubjects = allSubjects.sort((a, b) => {
-          if (a.grade !== b.grade) return a.grade - b.grade;
-          return a.name.localeCompare(b.name);
-        });
+        // Sort subjects by grade then name and filter by class grade
+        const sortedSubjects = allSubjects
+          .filter(s => s.grade === classItem.grade)
+          .sort((a, b) => {
+            if (a.grade !== b.grade) return a.grade - b.grade;
+            return a.name.localeCompare(b.name);
+          });
         setSubjects(sortedSubjects);
 
         // Prepare assignments state
@@ -145,7 +152,9 @@ const ClassSubjectModal = ({ classItem, onClose, onSave }) => {
                             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                           >
                             <option value="">-- Chưa phân công --</option>
-                            {teachers.map(t => (
+                            {teachers.filter(t => 
+                              teacherSubjects.some(ts => ts.teacher_id === t.id && ts.subject_id === a.subject_id)
+                            ).map(t => (
                               <option key={t.id} value={t.id}>{t.full_name} ({t.email})</option>
                             ))}
                           </select>

@@ -76,9 +76,45 @@ const getClassesByTeacher = async (teacher_id) => {
   return rows;
 };
 
+// Phân công môn và lớp cho giáo viên
+const assignClassesToTeacher = async (teacher_id, assignments, client = null) => {
+  const dbClient = client || await require('../config/db').getClient();
+  const shouldRelease = !client;
+  
+  try {
+    if (shouldRelease) await dbClient.query('BEGIN');
+    
+    // Xóa phân công cũ của giáo viên
+    await dbClient.query('DELETE FROM class_subjects WHERE teacher_id = $1', [teacher_id]);
+
+    // Thêm phân công mới
+    for (const a of assignments) {
+      const { subject_id, class_ids } = a;
+      if (subject_id && Array.isArray(class_ids)) {
+        for (const class_id of class_ids) {
+          await dbClient.query(
+            `INSERT INTO class_subjects (class_id, subject_id, teacher_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (class_id, subject_id) DO UPDATE SET teacher_id = EXCLUDED.teacher_id`,
+            [class_id, subject_id, teacher_id]
+          );
+        }
+      }
+    }
+
+    if (shouldRelease) await dbClient.query('COMMIT');
+  } catch (error) {
+    if (shouldRelease) await dbClient.query('ROLLBACK');
+    throw error;
+  } finally {
+    if (shouldRelease) dbClient.release();
+  }
+};
+
 module.exports = {
   findAll,
   getByClass,
   assignSubjectsToClass,
-  getClassesByTeacher
+  getClassesByTeacher,
+  assignClassesToTeacher
 };

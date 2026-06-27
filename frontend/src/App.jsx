@@ -10,6 +10,7 @@ import ExamManagement from './pages/ExamManagement';
 import ExamRoom from './pages/ExamRoom';
 import Statistics from './pages/Statistics';
 import GradeEssay from './pages/GradeEssay';
+import StudentSubmissionDetail from './pages/StudentSubmissionDetail';
 import NotFound from './pages/NotFound';
 import Profile from './pages/Profile';
 // Admin pages
@@ -18,6 +19,7 @@ import UserManagement from './pages/UserManagement';
 import ClassManagement from './pages/ClassManagement';
 import SubjectManagement from './pages/SubjectManagement';
 import Gradebook from './pages/Gradebook';
+import StudentSubmissionView from './pages/StudentSubmissionView';
 
 function AppContent() {
   const { isAuthenticated, user, loading } = useAuth();
@@ -40,7 +42,7 @@ function AppContent() {
       const allowedPaths = ['/dashboard', '/statistics', '/exam-room', '/question-bank', '/exams', '/grade-essay', '/grades', '/profile', '/login', '/'].concat(allPaths);
       
       // Allow parent path access if any child path matches
-      if (!allowedPaths.includes(location.pathname) && !location.pathname.startsWith('/admin/users')) {
+      if (!allowedPaths.includes(location.pathname) && !location.pathname.startsWith('/admin/users') && !location.pathname.startsWith('/submissions/')) {
         navigate('/dashboard', { replace: true });
       }
     }
@@ -181,7 +183,9 @@ function AppContent() {
               <Route path="/question-bank" element={<QuestionBank />} />
               <Route path="/exams"         element={<ExamManagement />} />
               <Route path="/grade-essay"   element={<GradeEssay />} />
+              <Route path="/submissions/:submissionId/detail" element={<StudentSubmissionDetail />} />
               <Route path="/grades"        element={<Gradebook />} />
+              <Route path="/submissions/:id/view" element={<StudentSubmissionView />} />
             </>
           )}
 

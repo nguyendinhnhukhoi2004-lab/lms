@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { submissionService, examService } from '../services/api';
 import MathViewer from '../components/MathViewer';
 
@@ -29,11 +30,6 @@ const EssayCard = ({ answer, index, onGrade, saving }) => {
             {needsGrading && (
               <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">⚠ Cần chấm thủ công</span>
             )}
-            {autoGraded && (
-              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-                NLP: {Math.round((answer.similarity_score || 0) * 100)}% tương đồng
-              </span>
-            )}
           </div>
           <div className="text-sm font-medium text-slate-800">
             <MathViewer htmlContent={answer.question_content} />
@@ -41,6 +37,39 @@ const EssayCard = ({ answer, index, onGrade, saving }) => {
         </div>
         <span className="shrink-0 text-xs text-slate-400">Tối đa: {answer.max_score}đ</span>
       </div>
+
+      {/* Chi tiết NLP — hiện khi đã chấm bởi AI */}
+      {autoGraded && answer.nlp_detail && (
+        <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-3 space-y-2">
+          <p className="text-xs font-semibold text-blue-700">Phân tích NLP</p>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 w-28 shrink-0">Độ tương đồng:</span>
+            <div className="flex-1 h-2 bg-blue-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full"
+                style={{ width: `${Math.round((answer.similarity_score || 0) * 100)}%` }}
+              />
+            </div>
+            <span className="text-xs font-semibold text-blue-700 w-10 text-right">
+              {Math.round((answer.similarity_score || 0) * 100)}%
+            </span>
+          </div>
+          {answer.nlp_detail.keywords_found?.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              <span className="text-xs text-slate-500 w-28 shrink-0">Từ khóa có:</span>
+              {answer.nlp_detail.keywords_found.map(kw => (
+                <span key={kw} className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">{kw}</span>
+              ))}
+            </div>
+          )}
+          {answer.nlp_detail.ai_note && (
+            <div>
+              <span className="text-xs text-slate-500">Nhận xét AI: </span>
+              <span className="text-xs text-slate-700 italic">{answer.nlp_detail.ai_note}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Đáp án mẫu */}
       {answer.sample_answer && (
@@ -97,6 +126,7 @@ const EssayCard = ({ answer, index, onGrade, saving }) => {
 
 // ── Danh sách bài nộp của 1 lịch thi ─────────────────────────────
 const SubmissionList = ({ scheduleId, onSelect }) => {
+  const navigate = useNavigate();
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading]         = useState(true);
 
@@ -121,6 +151,15 @@ const SubmissionList = ({ scheduleId, onSelect }) => {
             <div>
               <p className="text-sm font-medium text-slate-800">{s.student_name}</p>
               <p className="text-xs text-slate-400">{s.class_name} · Nộp {new Date(s.submitted_at).toLocaleString('vi-VN')}</p>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/submissions/${s.submission_id}/detail`);
+                }}
+                className="mt-1 text-xs text-brand-600 hover:underline"
+              >
+                Xem chi tiết bài làm →
+              </button>
             </div>
             <div className="flex items-center gap-3">
               {hasEssay && (
@@ -267,7 +306,12 @@ const GradeEssay = () => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between rounded-xl bg-white px-5 py-3 shadow-sm">
                   <div>
-                    <p className="font-semibold text-slate-900">{selectedSubmission.student_name}</p>
+                    <div className="flex items-center gap-3">
+                      <p className="font-semibold text-slate-900">{selectedSubmission.student_name}</p>
+                      <Link to={`/submissions/${selectedSubmission.id}/view`} className="rounded-md bg-brand-50 px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-100">
+                        👁 Xem toàn bộ bài
+                      </Link>
+                    </div>
                     <p className="text-xs text-slate-400">{selectedSubmission.class_name}</p>
                   </div>
                   <div className="text-right">

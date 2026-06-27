@@ -34,10 +34,13 @@ const gradeEssay = async (studentText, sampleText, keywords = [], maxScore = 10)
     return {
       similarity_score: parseFloat(data.similarity_score.toFixed(4)),
       auto_score:       parseFloat(data.suggested_score.toFixed(2)),
+      keyword_coverage: data.keyword_coverage ?? null,
+      keywords_found:   data.detail?.keywords_found ?? [],
+      ai_note:          data.detail?.note ?? null,
     };
   } catch (err) {
     console.error('NLP service error (sẽ chấm thủ công):', err.message);
-    return { similarity_score: null, auto_score: null };
+    return { similarity_score: null, auto_score: null, keyword_coverage: null, keywords_found: [], ai_note: null };
   }
 };
 
@@ -74,6 +77,9 @@ const gradeEssayBatch = async (essays) => {
         ? parseFloat(r.similarity_score.toFixed(4)) : null,
       auto_score: typeof r.suggested_score === 'number'
         ? parseFloat(r.suggested_score.toFixed(2)) : null,
+      keyword_coverage: r.keyword_coverage ?? null,
+      keywords_found:   r.detail?.keywords_found ?? [],
+      ai_note:          r.detail?.note ?? null,
     }));
   } catch (err) {
     console.error('NLP batch service error:', err.message);

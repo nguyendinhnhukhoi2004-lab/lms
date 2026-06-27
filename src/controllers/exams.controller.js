@@ -40,11 +40,15 @@ const getAll = async (req, res) => {
       if (assigned.length === 0) return res.status(200).json({ exams: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
       subject_ids = assigned;
     } else if (req.user.role === 'department_head') {
+      const assigned = await TeacherSubjectModel.findSubjectIdsByTeacher(req.user.id);
       const headSubjects = await TeacherSubjectModel.findSubjectNamesByHead(req.user.id);
-      if (headSubjects.length === 0) {
+      
+      if (headSubjects.length === 0 && assigned.length === 0) {
         return res.status(200).json({ exams: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
       }
-      subject_names = headSubjects;
+      
+      if (assigned.length > 0) subject_ids = assigned;
+      if (headSubjects.length > 0) subject_names = headSubjects;
     }
 
     const result = await ExamModel.findAll({
@@ -59,7 +63,7 @@ const getAll = async (req, res) => {
     return res.status(200).json(result);
   } catch (err) {
     console.error('getAll exams error:', err.message);
-    return res.status(500).json({ message: 'Lỗi server: ' + err.message });
+    return res.status(500).json({ message: 'Lỗi server' });
   }
 };
 
@@ -109,6 +113,36 @@ const create = async (req, res) => {
     return res.status(201).json({ message: 'Tạo đề thi thành công', exam });
   } catch (err) {
     console.error('create exam error:', err);
+    return res.status(500).json({ message: 'Lỗi server' });
+  }
+};
+
+// PUT /api/exams/:id
+// Body: { title, subject_id, duration_minutes, description }
+const update = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  try {
+    const { title, subject_id, duration_minutes, description } = req.body;
+    const exam = await ExamModel.findById(req.params.id);
+    
+    if (!exam) return res.status(404).json({ message: 'Không tìm thấy đề thi' });
+    if (exam.status !== 'draft') return res.status(409).json({ message: 'Chỉ có thể sửa đề đang ở trạng thái bản nháp' });
+    if (req.user.role === 'teacher' && exam.created_by !== req.user.id) {
+      return res.status(403).json({ message: 'Bạn không có quyền chỉnh sửa đề thi này' });
+    }
+    if (!(await TeacherSubjectModel.checkAccess(req.user.id, req.user.role, subject_id))) {
+      return res.status(403).json({ message: 'Bạn không có quyền gán đề thi cho môn học này' });
+    }
+
+    const updated = await ExamModel.updateInfo(req.params.id, {
+      title, subject_id, duration_minutes, description
+    });
+
+    return res.status(200).json({ message: 'Cập nhật đề thi thành công', exam: updated });
+  } catch (err) {
+    console.error('update exam error:', err);
     return res.status(500).json({ message: 'Lỗi server' });
   }
 };
@@ -372,6 +406,18 @@ const createSchedule = async (req, res) => {
 
     if (exam.status !== 'approved') {
       return res.status(409).json({ message: 'Chỉ có thể lên lịch cho đề thi đã được phê duyệt' });
+    }
+
+    // Giáo viên chỉ được lên lịch cho lớp mình được phân công dạy môn đó
+    if (req.user.role !== 'admin') {
+      const { query } = require('../config/db');
+      const { rows } = await query(
+        `SELECT 1 FROM class_subjects WHERE class_id = $1 AND subject_id = $2 AND teacher_id = $3`,
+        [class_id, exam.subject_id, req.user.id]
+      );
+      if (rows.length === 0) {
+        return res.status(403).json({ message: 'Bạn chỉ được phép lên lịch thi cho các lớp đã được phân công dạy môn này' });
+      }
     }
 
     // Kiểm tra giờ kết thúc phải sau giờ bắt đầu
@@ -740,13 +786,15 @@ const importFileCreateExam = async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      // 1. Tạo câu hỏi tạm (is_approved = false, chờ duyệt sau)
+      // 1. Tạo câu hỏi từ import — source='import', is_approved=true
+      //    Câu hỏi này KHÔNG hiện trong ngân hàng, không cần tổ trưởng duyệt
       const questionIds = [];
       for (const q of questions) {
         const { rows } = await client.query(
           `INSERT INTO questions
-             (subject_id, created_by, type, content, options, correct_answer, difficulty)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)
+             (subject_id, created_by, type, content, options, correct_answer, difficulty,
+              source, is_approved)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,'import',TRUE)
            RETURNING id`,
           [
             subject_id,
@@ -956,6 +1004,119 @@ const exportExcel = async (req, res) => {
   }
 };
 
+const exportWord = async (req, res) => {
+  try {
+    const exam = await ExamModel.findById(req.params.id);
+    if (!exam) return res.status(404).json({ message: 'Không tìm thấy đề thi' });
+
+    if (!(await TeacherSubjectModel.checkAccess(req.user.id, req.user.role, exam.subject_id))) {
+      return res.status(403).json({ message: 'Bạn không có quyền xuất đề thi này' });
+    }
+
+    const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, Packer } = require('docx');
+
+    const typeLabel = { multiple_choice: 'Trắc nghiệm', true_false: 'Đúng/Sai', short_answer: 'Trả lời ngắn', essay: 'Tự luận' };
+    const diffLabel = { nhan_biet: 'Biết', thong_hieu: 'Hiểu', van_dung: 'Vận dụng' };
+
+    const children = [];
+
+    // Tiêu đề đề thi
+    children.push(
+      new Paragraph({ text: exam.title, heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+      new Paragraph({ text: `Môn: ${exam.subject_name || ''}   |   Thời gian: ${exam.duration_minutes} phút`, alignment: AlignmentType.CENTER }),
+      new Paragraph({ text: '' }) // dòng trống
+    );
+
+    // Từng câu hỏi
+    exam.questions.forEach((q, idx) => {
+      const cleanContent = (q.content || '').replace(/<[^>]*>/g, '');
+
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: `Câu ${idx + 1}. `, bold: true }),
+            new TextRun({ text: `[${typeLabel[q.type] || q.type}] [${diffLabel[q.difficulty] || q.difficulty}]`, color: '888888' }),
+            new TextRun({ text: `  ${cleanContent}` }),
+          ],
+          spacing: { before: 200 },
+        })
+      );
+
+      // Lựa chọn cho trắc nghiệm
+      if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
+        q.options.forEach((opt, i) => {
+          const isStr = typeof opt === 'string';
+          const label = isStr ? String.fromCharCode(65 + i) : (opt.id || String.fromCharCode(65 + i));
+          const text  = isStr ? opt : (opt.text || '');
+          children.push(new Paragraph({
+            text: `    ${label}. ${text}`,
+            indent: { left: 720 },
+          }));
+        });
+      }
+
+      // Mệnh đề cho đúng/sai
+      if (q.type === 'true_false' && Array.isArray(q.options)) {
+        q.options.forEach((opt, i) => {
+          const isStr = typeof opt === 'string';
+          const label = String.fromCharCode(97 + i); // a, b, c, d
+          const statement = isStr ? opt : (opt.statement || '');
+          children.push(new Paragraph({
+            text: `    ${label}) ${statement}`,
+            indent: { left: 720 },
+          }));
+        });
+      }
+
+      // Đáp án (in nhỏ màu xám — giáo viên có thể xóa khi in cho học sinh)
+      let answerText = '';
+      let ca = q.correct_answer;
+      if (typeof ca === 'string') {
+        try { ca = JSON.parse(ca); } catch (e) { ca = {}; }
+      }
+
+      if (q.type === 'multiple_choice') {
+        if (Array.isArray(ca)) answerText = `Đáp án: ${ca.join(', ')}`;
+        else answerText = `Đáp án: ${ca?.selected?.join(', ') || ''}`;
+      }
+      else if (q.type === 'true_false') {
+        if (ca?.answers) {
+          const parts = Object.entries(ca.answers).map(([k, v]) => `${k}:${v ? 'Đ' : 'S'}`);
+          answerText = `Đáp án: ${parts.join(', ')}`;
+        } else if (Array.isArray(ca)) {
+          answerText = `Đáp án: ${ca.join(', ')}`;
+        }
+      }
+      else if (q.type === 'short_answer') {
+        if (Array.isArray(ca)) answerText = `Đáp án: ${ca.join(' / ')}`;
+        else answerText = `Đáp án: ${ca?.accepted?.join(' / ') || ''}`;
+      }
+      else if (q.type === 'essay') {
+        if (ca?.keywords) answerText = `Từ khóa: ${ca.keywords.join(', ')}`;
+        else if (ca?.sample) answerText = `Đáp án mẫu: ${ca.sample}`;
+      }
+
+      if (answerText) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: `    ${answerText}`, color: 'AAAAAA', italics: true, size: 18 })],
+        }));
+      }
+    });
+
+    const doc = new Document({ sections: [{ children }] });
+    const buffer = await Packer.toBuffer(doc);
+
+    const safeName = exam.title.replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF\s]/g, '').trim();
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(safeName)}.docx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    return res.send(buffer);
+
+  } catch (err) {
+    console.error('exportWord error:', err);
+    return res.status(500).json({ message: 'Lỗi server' });
+  }
+};
+
 // ============================================================
 // NGHIỆP VỤ GDPT 2018
 // ============================================================
@@ -1026,11 +1187,11 @@ const triggerExam = async (req, res) => {
 };
 
 module.exports = {
-  getAll, getById, create, setQuestions, autoGenerate,
+  getAll, getById, create, update, setQuestions, autoGenerate,
   submit, approve, reject,
   getSchedules, createSchedule, cancelSchedule,
   updateSchedule, deleteSchedule, deleteExam,
   getMatrix, setMatrix, autoGenerateFromMatrix,
-  importFileCreateExam, parseFileOnly, exportExcel,
+  importFileCreateExam, parseFileOnly, exportExcel, exportWord,
   generateRooms, getRooms, getRoomStudents, triggerExam
 };

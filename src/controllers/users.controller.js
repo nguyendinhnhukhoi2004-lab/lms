@@ -189,6 +189,13 @@ const importStudents = async (req, res) => {
     const { getClient } = require('../config/db');
     const client = await getClient();
 
+    // KIỂM TRA LỚP CÓ TỒN TẠI KHÔNG
+    const { rows: classCheck } = await client.query('SELECT id FROM classes WHERE id = $1', [class_id]);
+    if (classCheck.length === 0) {
+      client.release();
+      return res.status(400).json({ message: 'Lớp học không tồn tại' });
+    }
+
     try {
       await client.query('BEGIN');
 

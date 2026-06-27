@@ -194,6 +194,7 @@ export const examService = {
   getAll: (params) => api.request(`/exams?${new URLSearchParams(params).toString()}`),
   getById: (id) => api.request(`/exams/${id}`),
   create: (data) => api.request('/exams', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => api.request(`/exams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   setQuestions: (id, questions) => api.request(`/exams/${id}/questions`, { method: 'PUT', body: JSON.stringify({ questions }) }),
   autoGenerate: (id, data) => api.request(`/exams/${id}/auto-generate`, { method: 'POST', body: JSON.stringify(data) }),
   submit: (id) => api.request(`/exams/${id}/submit`, { method: 'PATCH' }),
@@ -202,11 +203,13 @@ export const examService = {
   delete: (id) => api.request(`/exams/${id}`, { method: 'DELETE' }),
 
   getMatrix: (id) => api.request(`/exams/${id}/matrix`),
-  setMatrix: (id, matrix) => api.request(`/exams/${id}/matrix`, { method: 'PUT', body: JSON.stringify(matrix) }),
+  setMatrix: (id, matrix) => api.request(`/exams/${id}/matrix`, { method: 'PUT', body: JSON.stringify({ matrix }) }),
   autoGenerateFromMatrix: (id) => api.request(`/exams/${id}/auto-generate-from-matrix`, { method: 'POST' }),
 
   importFile: (formData) => api.upload('/exams/import-file', formData),
+  parseFile: (formData) => api.upload('/exams/parse-file', formData),
   exportExcel: (id) => api.download(`/exams/${id}/export`),
+  exportWord: (id) => api.download(`/exams/${id}/export-word`),
   
   // ── Lịch thi ────────────────────────────────────────────────
   getSchedules: (params = {}) => {
@@ -242,10 +245,12 @@ export const submissionService = {
 export const statisticsService = {
   getAdminOverview: () => api.request('/statistics/overview').then(d => d.overview || d),
   getScheduleSummary: (scheduleId) => api.request(`/statistics/schedule/${scheduleId}`),
+  getQuestionAnalysis: (scheduleId) => api.request(`/statistics/schedule/${scheduleId}/questions`),
   getClassHistory: (classId) => api.request(`/statistics/class/${classId}`),
   getStudentProgress: () => api.request('/statistics/student/progress'),
   getStudentSummary: () => api.request('/statistics/student/summary'),
   getQuestionBankStats: () => api.request('/statistics/question-bank'),
+  exportScheduleExcel: (scheduleId) => api.download(`/statistics/schedule/${scheduleId}/export`),
 };
 
 // ==========================================
@@ -267,10 +272,12 @@ export const teacherSubjectService = {
   getByTeacher: (id) => api.get(`/teacher-subjects/teacher/${id}`).then(d => d.subjects || []),
 
   // Admin gán môn cho giáo viên (ghi đè)
-  assignToTeacher: (id, subject_ids) =>
-    api.put(`/teacher-subjects/teacher/${id}`, { subject_ids }),
+  assignToTeacher: (id, subject_ids) => api.put(`/teacher-subjects/teacher/${id}`, { subject_ids }),
 
-  // Admin xem phân công của tổ trưởng
+  // Phân công toàn diện (môn giảng dạy, lớp giảng dạy, môn phụ trách)
+  fullAssign: (id, data) => api.post(`/teacher-subjects/teacher/${id}/full-assign`, data),
+
+  // Admin xem môn phụ trách của tổ trưởng
   getByHead: (id) => api.get(`/teacher-subjects/head/${id}`).then(d => d.subjects || []),
 
   // Admin gán môn cho tổ trưởng

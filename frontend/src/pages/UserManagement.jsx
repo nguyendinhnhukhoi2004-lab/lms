@@ -395,107 +395,198 @@ const ImportStudentModal = ({ classes, onSave, onClose }) => {
 // ════════════════════════════════════════════════════════════════
 // MODAL: Phân công môn học cho giáo viên / tổ trưởng
 // ════════════════════════════════════════════════════════════════
-const AssignSubjectModal = ({ user, subjects, subjectNames, onSave, onClose }) => {
-  const isHead     = user.role === 'department_head';
-  const isTeacher  = user.role === 'teacher';
+const AssignSubjectModal = ({ user, subjects, subjectNames, classes, onSave, onClose }) => {
+  const isHead = user.role === 'department_head';
+  const isTeacher = user.role === 'teacher' || isHead; // Head cũng là giáo viên
 
-  const [selected, setSelected] = useState(() => {
-    if (isTeacher) return (user.assigned_subjects || []).map(s => s.subject_id);
-    if (isHead)    return (user.assigned_subjects || []).map(s => s.subject_name);
-    return [];
-  });
-  const [saving, setSaving]   = useState(false);
-  const [error, setError]     = useState('');
+  // State quản lý môn tổ trưởng
+  const [headSubjects, setHeadSubjects] = useState([]);
+  
+  // State quản lý môn dạy & lớp dạy. 
+  // Dạng object: { "subject_id_1": ["class_id_1", "class_id_2"], ... }
+  const [assignments, setAssignments] = useState({});
+
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // Load data ban đầu
   useEffect(() => {
     const load = async () => {
       try {
-        if (isTeacher) {
-          const subs = await teacherSubjectService.getByTeacher(user.id);
-          setSelected(subs.map(s => s.subject_id));
-        } else {
-          const subs = await teacherSubjectService.getByHead(user.id);
-          setSelected(subs.map(s => s.subject_name));
+        if (isHead) {
+          const hs = await teacherSubjectService.getByHead(user.id);
+          setHeadSubjects(hs.map(s => s.subject_name));
         }
-      } catch {} finally { setLoading(false); }
+
+        if (isTeacher) {
+          // Lấy môn dạy (để đảm bảo có môn kể cả khi chưa gán lớp)
+          const ts = await teacherSubjectService.getByTeacher(user.id);
+          // Lấy lớp dạy
+          const tc = await classSubjectService.getTeacherClasses(user.id);
+          
+          const newAssignments = {};
+          
+          // Gán môn dạy vào dictionary
+          ts.forEach(s => { newAssignments[s.subject_id] = []; });
+          
+          // Gán lớp vào môn tương ứng
+          tc.data?.forEach?.(c => {
+            if (!newAssignments[c.subject_id]) newAssignments[c.subject_id] = [];
+            newAssignments[c.subject_id].push(c.class_id);
+          }) || tc.forEach?.(c => {
+            if (!newAssignments[c.subject_id]) newAssignments[c.subject_id] = [];
+            newAssignments[c.subject_id].push(c.class_id);
+          });
+
+          setAssignments(newAssignments);
+        }
+      } catch (err) { 
+        console.error("Load modal error:", err);
+      } finally { setLoading(false); }
     };
     load();
-  }, [user.id]);
+  }, [user.id, isHead, isTeacher]);
 
-  const toggle = (val) =>
-    setSelected(p => p.includes(val) ? p.filter(v => v !== val) : [...p, val]);
+  const toggleHeadSubject = (name) => {
+    setHeadSubjects(p => p.includes(name) ? p.filter(n => n !== name) : [...p, name]);
+  };
+
+  const toggleSubject = (subjectId) => {
+    setAssignments(prev => {
+      const next = { ...prev };
+      if (next[subjectId] !== undefined) {
+        delete next[subjectId]; // Bỏ chọn môn -> bỏ chọn hết lớp
+      } else {
+        next[subjectId] = []; // Chọn môn -> lớp rỗng
+      }
+      return next;
+    });
+  };
+
+  const toggleClass = (subjectId, classId) => {
+    setAssignments(prev => {
+      const next = { ...prev };
+      if (!next[subjectId]) next[subjectId] = [];
+      if (next[subjectId].includes(classId)) {
+        next[subjectId] = next[subjectId].filter(id => id !== classId);
+      } else {
+        next[subjectId] = [...next[subjectId], classId];
+      }
+      return next;
+    });
+  };
 
   const handleSave = async () => {
     setSaving(true); setError('');
     try {
-      if (isTeacher) {
-        await teacherSubjectService.assignToTeacher(user.id, selected);
-      } else {
-        await teacherSubjectService.assignToHead(user.id, selected);
+      // Chuẩn bị payload
+      const payload = {
+        assignments: Object.entries(assignments).map(([subject_id, class_ids]) => ({
+          subject_id,
+          class_ids
+        })),
+      };
+      
+      if (isHead) {
+        payload.head_subjects = headSubjects;
       }
+
+      await teacherSubjectService.fullAssign(user.id, payload);
       onSave();
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e.message || 'Lỗi lưu phân công'); }
     finally { setSaving(false); }
   };
 
-  const options = isTeacher ? subjects : subjectNames.map(n => ({ id: n, label: n }));
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div>
-            <h3 className="text-base font-semibold text-slate-900">Phân công môn học</h3>
+            <h3 className="text-base font-semibold text-slate-900">Phân công toàn diện</h3>
             <p className="text-xs text-slate-500 mt-0.5">{user.full_name} · {ROLES[user.role]?.label}</p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button>
         </div>
-        <div className="p-6 space-y-4">
+        
+        <div className="p-6 overflow-y-auto flex-1 space-y-6">
           {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+          {loading && <div className="py-6 text-center text-sm text-slate-400">Đang tải...</div>}
 
-          {loading ? (
-            <div className="py-6 text-center text-sm text-slate-400">Đang tải...</div>
-          ) : (
-            <div>
-              <p className="text-sm font-medium text-slate-700 mb-3">
-                {isTeacher ? 'Chọn môn học được phép tạo đề:' : 'Chọn môn bộ môn phụ trách:'}
-              </p>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {isTeacher ? subjects.map(s => (
-                  <label key={s.id} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-100 p-3 hover:bg-slate-50 transition">
-                    <input type="checkbox" checked={selected.includes(s.id)}
-                      onChange={() => toggle(s.id)}
-                      className="h-4 w-4 rounded accent-brand-600" />
-                    <div>
-                      <p className="text-sm font-medium text-slate-800">{s.name}</p>
-                      <p className="text-xs text-slate-400">Khối {s.grade}</p>
-                    </div>
-                  </label>
-                )) : subjectNames.map(name => (
-                  <label key={name} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-100 p-3 hover:bg-slate-50 transition">
-                    <input type="checkbox" checked={selected.includes(name)}
-                      onChange={() => toggle(name)}
-                      className="h-4 w-4 rounded accent-brand-600" />
-                    <p className="text-sm font-medium text-slate-800">{name} (tất cả khối)</p>
+          {!loading && isHead && (
+            <div className="border border-indigo-100 bg-indigo-50/50 rounded-xl p-4">
+              <p className="text-sm font-semibold text-indigo-900 mb-3">1. Phân công Tổ trưởng (Chuyên môn phụ trách)</p>
+              <div className="flex flex-wrap gap-3">
+                {subjectNames.map(name => (
+                  <label key={name} className="flex cursor-pointer items-center gap-2 rounded-lg bg-white border border-indigo-200 px-3 py-2 hover:bg-indigo-50 transition shadow-sm">
+                    <input type="checkbox" checked={headSubjects.includes(name)}
+                      onChange={() => toggleHeadSubject(name)}
+                      className="h-4 w-4 rounded accent-indigo-600" />
+                    <span className="text-sm font-medium text-indigo-800">{name}</span>
                   </label>
                 ))}
               </div>
-              {selected.length > 0 && (
-                <p className="mt-3 text-xs text-emerald-600 font-medium">
-                  ✓ Đã chọn {selected.length} {isTeacher ? 'môn học' : 'bộ môn'}
-                </p>
-              )}
             </div>
           )}
 
-          <div className="flex justify-end gap-3 pt-1">
-            <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Hủy</button>
-            <button onClick={handleSave} disabled={saving || loading}
-              className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-              {saving ? 'Đang lưu...' : 'Lưu phân công'}
-            </button>
-          </div>
+          {!loading && isTeacher && (
+            <div>
+              <p className="text-sm font-semibold text-slate-800 mb-3">
+                {isHead ? '2. Phân công Giảng dạy (Lớp & Môn)' : 'Phân công Giảng dạy (Lớp & Môn)'}
+              </p>
+              
+              <div className="space-y-4">
+                {subjects.map(s => {
+                  const isSubjectSelected = assignments[s.id] !== undefined;
+                  const selectedClasses = assignments[s.id] || [];
+                  const classesForGrade = classes.filter(c => c.grade === s.grade);
+                  
+                  return (
+                    <div key={s.id} className={`rounded-xl border ${isSubjectSelected ? 'border-brand-200 bg-brand-50/20' : 'border-slate-200'} p-4 transition`}>
+                      <label className="flex cursor-pointer items-center gap-3">
+                        <input type="checkbox" checked={isSubjectSelected}
+                          onChange={() => toggleSubject(s.id)}
+                          className="h-5 w-5 rounded accent-brand-600" />
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">{s.name}</p>
+                          <p className="text-xs text-slate-500">Khối {s.grade}</p>
+                        </div>
+                      </label>
+                      
+                      {isSubjectSelected && (
+                        <div className="mt-4 pl-8 border-l-2 border-brand-100 ml-2">
+                          <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wider">Chọn lớp dạy môn {s.name}</p>
+                          {classesForGrade.length === 0 ? (
+                            <p className="text-sm text-slate-400 italic">Không có lớp khối {s.grade} nào.</p>
+                          ) : (
+                            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                              {classesForGrade.map(c => (
+                                <label key={c.id} className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border ${selectedClasses.includes(c.id) ? 'bg-brand-100 border-brand-300 text-brand-800' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'} p-2 text-sm font-medium transition`}>
+                                  <input type="checkbox" className="hidden"
+                                    checked={selectedClasses.includes(c.id)}
+                                    onChange={() => toggleClass(s.id, c.id)}
+                                  />
+                                  {c.name}
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t px-6 py-4 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
+          <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm text-slate-600 bg-white hover:bg-slate-100 font-medium shadow-sm">Hủy</button>
+          <button onClick={handleSave} disabled={saving || loading}
+            className="rounded-lg bg-brand-600 px-6 py-2 text-sm font-bold text-white hover:bg-brand-700 shadow-sm disabled:opacity-50">
+            {saving ? 'Đang lưu...' : 'Lưu phân công'}
+          </button>
         </div>
       </div>
     </div>
@@ -908,7 +999,8 @@ const UserManagement = ({ defaultRole }) => {
           user={showAssign}
           subjects={allSubjects}
           subjectNames={subjectNames}
-          onSave={() => { setShowAssign(null); }}
+          classes={classes}
+          onSave={() => { setShowAssign(null); loadData(); }}
           onClose={() => setShowAssign(null)}
         />
       )}

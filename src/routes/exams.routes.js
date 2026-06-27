@@ -119,13 +119,30 @@ router.get(
   ExamsController.exportExcel
 );
 
+// GET /api/exams/:id/export-word — xuất đề thi ra file Word
+router.get(
+  '/:id/export-word',
+  authenticate,
+  authorize('admin', 'department_head', 'teacher'),
+  ExamsController.exportWord
+);
+
 // POST /api/exams — tạo đề thi mới (bản nháp)
 router.post(
   '/',
   authenticate,
-  authorize('admin', 'teacher', 'department_head'),
+  authorize('admin', 'department_head', 'teacher'),
   createExamValidation,
   ExamsController.create
+);
+
+// PUT /api/exams/:id — cập nhật thông tin đề thi (chỉ bản nháp)
+router.put(
+  '/:id',
+  authenticate,
+  authorize('admin', 'department_head', 'teacher'),
+  createExamValidation,
+  ExamsController.update
 );
 
 // DELETE /api/exams/:id — xóa đề thi

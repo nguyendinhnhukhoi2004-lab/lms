@@ -59,6 +59,7 @@ const findAnswers = async (submission_id) => {
        sa.auto_score,
        sa.final_score,
        sa.similarity_score,
+       sa.nlp_detail,
        q.type         AS question_type,
        q.content      AS question_content,
        q.correct_answer
@@ -127,18 +128,19 @@ const saveAutoScores = async (submission_id, scores) => {
 };
 
 // Lưu kết quả điểm tương đồng từ Python NLP (cho câu tự luận)
-const saveSimilarityScore = async (submission_id, question_id, similarity_score, auto_score) => {
+const saveSimilarityScore = async (submission_id, question_id, similarity_score, auto_score, nlp_detail = null) => {
   // Dùng UPSERT: học sinh có thể không viết gì vào tự luận (row chưa tồn tại)
   await query(
     `INSERT INTO submission_answers
-       (submission_id, question_id, student_answer, similarity_score, auto_score, graded_at)
-     VALUES ($3, $4, NULL, $1, $2, NOW())
+       (submission_id, question_id, student_answer, similarity_score, auto_score, nlp_detail, graded_at)
+     VALUES ($3, $4, NULL, $1, $2, $5, NOW())
      ON CONFLICT (submission_id, question_id)
      DO UPDATE SET
        similarity_score = EXCLUDED.similarity_score,
        auto_score       = EXCLUDED.auto_score,
+       nlp_detail       = EXCLUDED.nlp_detail,
        graded_at        = NOW()`,
-    [similarity_score, auto_score, submission_id, question_id]
+    [similarity_score, auto_score, submission_id, question_id, nlp_detail ? JSON.stringify(nlp_detail) : null]
   );
 };
 

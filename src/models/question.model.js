@@ -17,7 +17,7 @@ const findAll = async ({ subject_id, subject_ids, type, difficulty, is_approved,
     FROM questions q
     JOIN subjects s ON q.subject_id = s.id
     JOIN users    u ON q.created_by  = u.id
-    WHERE TRUE
+    WHERE (q.source = 'manual' OR q.source IS NULL)
   `;
 
   // Thêm điều kiện lọc động
@@ -157,6 +157,7 @@ const findRandom = async ({ subject_id, difficulty, type, topic_filter, exclude_
     SELECT id, type, content, options, difficulty
     FROM questions
     WHERE subject_id=$1 AND is_approved=TRUE
+      AND (source = 'manual' OR source IS NULL)
   `;
 
   if (difficulty)    { params.push(difficulty);    sql += ` AND difficulty=$${params.length}`; }
@@ -193,6 +194,7 @@ const findDuplicate = async (subject_id, content, options_str, exclude_id = null
     JOIN users    u ON q.created_by  = u.id
     JOIN subjects s ON q.subject_id  = s.id
     WHERE q.subject_id = $1
+      AND (q.source = 'manual' OR q.source IS NULL)
       AND LOWER(REGEXP_REPLACE(TRIM(q.content), '\\s+', ' ', 'g'))
         = LOWER(REGEXP_REPLACE(TRIM($2), '\\s+', ' ', 'g'))
       AND COALESCE(q.options::jsonb, '[]'::jsonb) = COALESCE($3::jsonb, '[]'::jsonb)

@@ -46,6 +46,42 @@ const assignToTeacher = async (req, res) => {
   }
 };
 
+// POST /api/teacher-subjects/teacher/:id/full-assign
+// Phân công toàn diện (môn giảng dạy, lớp, môn tổ trưởng) cho giáo viên
+// Body: { assignments: [{ subject_id, class_ids: [] }], head_subjects: ["Toán"] }
+const fullAssign = async (req, res) => {
+  const ClassSubjectModel = require('../models/class_subject.model');
+  const dbClient = await require('../config/db').getClient();
+
+  try {
+    const { assignments = [], head_subjects } = req.body;
+    const teacher_id = req.params.id;
+
+    await dbClient.query('BEGIN');
+
+    // 1. Phân công môn giảng dạy
+    const subject_ids = assignments.map(a => a.subject_id);
+    await TeacherSubjectModel.assign(teacher_id, subject_ids, dbClient);
+
+    // 2. Phân công lớp giảng dạy
+    await ClassSubjectModel.assignClassesToTeacher(teacher_id, assignments, dbClient);
+
+    // 3. Phân công môn tổ trưởng (nếu có truyền lên)
+    if (Array.isArray(head_subjects)) {
+      await TeacherSubjectModel.assignHead(teacher_id, head_subjects, dbClient);
+    }
+
+    await dbClient.query('COMMIT');
+    return res.status(200).json({ message: 'Phân công toàn diện thành công' });
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    console.error('fullAssign error:', err);
+    return res.status(500).json({ message: 'Lỗi server khi phân công toàn diện' });
+  } finally {
+    dbClient.release();
+  }
+};
+
 // GET /api/teacher-subjects/head/:id
 // Xem môn phụ trách của tổ trưởng
 const getByHead = async (req, res) => {
@@ -109,7 +145,7 @@ const getSubjectNames = async (req, res) => {
 };
 
 module.exports = {
-  getAll, getByTeacher, assignToTeacher,
+  getAll, getByTeacher, assignToTeacher, fullAssign,
   getByHead, assignToHead,
   getMySubjects, getSubjectNames,
 };

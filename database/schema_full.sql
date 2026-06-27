@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SCHEMA HỆ THỐNG QUẢN LÝ ĐỀ THI & ĐÁNH GIÁ TỰ ĐỘNG THPT
 -- Phiên bản: 2.0  |  Cập nhật: 2026-06
 -- Chương trình GDPT 2018 - 36 lớp (10T1..12X5)
@@ -221,6 +221,7 @@ CREATE TABLE public.exams (
     rejection_reason text,       -- Lý do tổ trưởng từ chối (xóa khi tái nộp)
     rejected_at      timestamp,  -- Reset về NULL khi tái nộp
     approved_at      timestamp,
+    updated_at       timestamp,
     created_at       timestamp    DEFAULT now(),
     CONSTRAINT exams_pkey PRIMARY KEY (id),
     CONSTRAINT exams_duration_minutes_check CHECK (duration_minutes > 0),
@@ -372,6 +373,7 @@ CREATE TABLE public.submission_answers (
     student_answer   jsonb,                   -- Câu trả lời của học sinh
     auto_score       numeric(4,2),            -- Điểm tự động / điểm gợi ý NLP
     similarity_score numeric(5,4),            -- TF-IDF cosine similarity (essay)
+    nlp_detail       jsonb,                   -- Chi tiết NLP (keyword, nhận xét AI)
     final_score      numeric(4,2),            -- Điểm giáo viên xác nhận
     graded_at        timestamp,
     CONSTRAINT submission_answers_pkey PRIMARY KEY (id),
